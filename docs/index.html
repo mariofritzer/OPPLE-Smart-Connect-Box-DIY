@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkyBridge Installer</title>
+<script type="module" src="https://cdn.jsdelivr.net/npm/esp-web-tools@10/dist/web/install-button.js"></script>
+<style>
+  :root { --bg:#f4f4f5; --card:#fff; --fg:#18181b; --muted:#52525b; --line:#e4e4e7; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#18181b; --card:#27272a; --fg:#f4f4f5; --muted:#a1a1aa; --line:#3f3f46; --accent:#3b82f6; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.6em; margin:.2em 0; }
+  h2 { font-size:1.15em; margin:1.6em 0 .4em; }
+  .card { background:var(--card); border-radius:14px; padding:18px; margin:14px 0; box-shadow:0 1px 3px #0002; }
+  .muted { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:.93em; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  code { background:var(--line); padding:1px 5px; border-radius:4px; }
+  esp-web-install-button button[slot=activate] {
+    background:var(--accent); color:#fff; border:0; border-radius:10px; padding:14px 22px; font-size:1.05em; cursor:pointer;
+  }
+  .warn { border-left:4px solid #f59e0b; }
+  .table-wrap { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>&#128161; SkyBridge Installer</h1>
+  <p class="muted">Bluetooth-Mesh-Lampen (z.&nbsp;B. OPPLE BLE2) per ESP32 in Home Assistant &ndash; Firmware direkt aus dem Browser installieren.</p>
+
+  <div class="card">
+    <h2 style="margin-top:0">1. Board anstecken &amp; installieren</h2>
+    <p>Board per USB anschlie&szlig;en und auf den Knopf klicken. Der Chip wird <b>automatisch erkannt</b> und die passende Firmware installiert.</p>
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate">Firmware installieren</button>
+      <span slot="unsupported">Dein Browser unterst&uuml;tzt das leider nicht. Bitte <b>Chrome</b> oder <b>Edge</b> am PC/Mac verwenden (nicht am Handy).</span>
+      <span slot="not-allowed">Die Seite muss &uuml;ber HTTPS ge&ouml;ffnet werden.</span>
+    </esp-web-install-button>
+    <p class="muted" style="margin-top:12px">Beim ersten Mal &bdquo;Ger&auml;t l&ouml;schen&ldquo; (Erase) best&auml;tigen.</p>
+  </div>
+
+  <div class="card warn">
+    <b>Verbindung klappt nicht?</b>
+    <ul>
+      <li>Alle Programme schlie&szlig;en, die den Anschluss belegen k&ouml;nnten (Arduino IDE, VS Code/PlatformIO, 3D-Drucker-Software, andere Browser-Tabs).</li>
+      <li>BOOT-Taste gedr&uuml;ckt halten, kurz RESET dr&uuml;cken, BOOT loslassen &ndash; dann nochmal versuchen.</li>
+      <li>Windows: Boards mit CH340/CP210x-Chip brauchen evtl. einen Treiber.</li>
+      <li>Arduino Nano ESP32: Taste B1 gedr&uuml;ckt halten und dabei RESET dr&uuml;cken.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">2. Einrichten</h2>
+    <ol>
+      <li>Mit dem WLAN <code>SkyBridge-Setup</code> verbinden (Passwort <code>skybridge</code>).</li>
+      <li><code>http://192.168.4.1</code> &ouml;ffnen, <b>Board</b>, WLAN und MQTT eintragen, speichern.</li>
+      <li>Die Bridge startet neu. Ihre IP im Router nachsehen und im Browser &ouml;ffnen.</li>
+      <li>Unter &bdquo;Lampen&ldquo; die <b>Export-Datei der Telink-SIG-Mesh-App</b> hochladen, speichern.</li>
+      <li>Die Lampen erscheinen automatisch in Home Assistant (MQTT).</li>
+    </ol>
+    <p class="muted">Ausf&uuml;hrliche Anleitung im <a href="../">README des Projekts</a>.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Unterst&uuml;tzte Boards</h2>
+    <div class="table-wrap">
+    <table>
+      <tr><th>Board</th><th>Chip</th><th>Reset-Taste</th></tr>
+      <tr><td>ESP32 DevKit V1 / WROOM</td><td>ESP32</td><td>BOOT (GPIO0)</td></tr>
+      <tr><td>LOLIN / Wemos D32</td><td>ESP32</td><td>BOOT (GPIO0)</td></tr>
+      <tr><td>M5Stack Atom Lite</td><td>ESP32</td><td>Frontknopf (GPIO39)</td></tr>
+      <tr><td>ESP32-S3 DevKitC</td><td>ESP32-S3</td><td>BOOT (GPIO0)</td></tr>
+      <tr><td>Arduino Nano ESP32</td><td>ESP32-S3</td><td>B1 (GPIO0)</td></tr>
+      <tr><td>Seeed XIAO ESP32-S3</td><td>ESP32-S3</td><td>BOOT (GPIO0)</td></tr>
+      <tr><td>LOLIN / Wemos S3 Mini</td><td>ESP32-S3</td><td>BOOT (GPIO0)</td></tr>
+      <tr><td>M5Stack AtomS3</td><td>ESP32-S3</td><td>Bildschirmtaste (GPIO41)</td></tr>
+      <tr><td>ESP32-C3 SuperMini / Zero</td><td>ESP32-C3</td><td>BOOT (GPIO9)</td></tr>
+      <tr><td>Seeed XIAO ESP32-C3</td><td>ESP32-C3</td><td>BOOT (GPIO9)</td></tr>
+      <tr><td>ESP32-C6 DevKit / SuperMini</td><td>ESP32-C6</td><td>BOOT (GPIO9)</td></tr>
+      <tr><td>Seeed XIAO ESP32-C6</td><td>ESP32-C6</td><td>BOOT (GPIO9)</td></tr>
+      <tr><td>ESP32-C5 DevKit (experimentell)</td><td>ESP32-C5</td><td>BOOT (GPIO28)</td></tr>
+    </table>
+    </div>
+    <p class="muted">Reset-Taste 5&nbsp;Sekunden halten = WLAN/MQTT zur&uuml;cksetzen. Beschriftung auf dem Board kann falsch sein &ndash; der Installer erkennt den echten Chip.</p>
+  </div>
+</main>
+</body>
+</html>
