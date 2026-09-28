@@ -1,6 +1,6 @@
 {
   "name": "SkyBridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "new_install_prompt_erase": true,
   "builds": [
     { "chipFamily": "ESP32",    "parts": [{ "path": "firmware/skybridge-esp32.bin",   "offset": 0 }] },

@@ -444,7 +444,13 @@ static void discovery(void)
             vTaskDelay(pdMS_TO_TICKS(2500));
         }
         if (s_found_n > 0) {
-            vTaskDelay(pdMS_TO_TICKS(2500));   /* Nachzuegler abwarten */
+            /* Treffer: noch zweimal nachfragen, damit auch Lampen erfasst werden,
+             * deren erste Antwort verloren ging */
+            vTaskDelay(pdMS_TO_TICKS(1500));
+            for (int k = 0; k < 2; k++) {
+                do_send(&m);
+                vTaskDelay(pdMS_TO_TICKS(2000));
+            }
             hit = cands[c];
         }
     }
