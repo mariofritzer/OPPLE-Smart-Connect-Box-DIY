@@ -1,0 +1,15 @@
+build/
+build-*/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# NIEMALS eigene Mesh-Daten einchecken (enthalten Schluessel!)
+*.json
+!docs/manifest.json
+*mesh*.txt
+telink_sig_mesh_log*
+
+.vscode/
+.idea/
