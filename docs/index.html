@@ -39,7 +39,8 @@
       <span slot="unsupported">Dein Browser unterst&uuml;tzt das leider nicht. Bitte <b>Chrome</b> oder <b>Edge</b> am PC/Mac verwenden (nicht am Handy).</span>
       <span slot="not-allowed">Die Seite muss &uuml;ber HTTPS ge&ouml;ffnet werden.</span>
     </esp-web-install-button>
-    <p class="muted" style="margin-top:12px">Beim ersten Mal &bdquo;Ger&auml;t l&ouml;schen&ldquo; (Erase) best&auml;tigen.</p>
+    <p class="muted" style="margin-top:12px">Welcher Anschluss ist der ESP? <b>&bdquo;USB JTAG/serial debug unit&ldquo;</b> (C3/C6/S3) oder <b>&bdquo;CH340&ldquo; / &bdquo;CP210x&ldquo;</b> (Boards mit Wandlerchip). Im Zweifel ESP abstecken und schauen, welcher Eintrag verschwindet.<br>
+Beim ersten Mal <b>&bdquo;Erase device&ldquo;</b> anhaken. Fenster w&auml;hrend der Installation im Vordergrund lassen.</p>
   </div>
 
   <div class="card warn">
@@ -55,13 +56,11 @@
   <div class="card">
     <h2 style="margin-top:0">2. Einrichten</h2>
     <ol>
-      <li>Mit dem WLAN <code>SkyBridge-Setup</code> verbinden (Passwort <code>skybridge</code>).</li>
-      <li><code>http://192.168.4.1</code> &ouml;ffnen, <b>Board</b>, WLAN und MQTT eintragen, speichern.</li>
-      <li>Die Bridge startet neu. Ihre IP im Router nachsehen und im Browser &ouml;ffnen.</li>
-      <li>Unter &bdquo;Lampen&ldquo; die <b>Export-Datei der Telink-SIG-Mesh-App</b> hochladen, speichern.</li>
-      <li>Die Lampen erscheinen automatisch in Home Assistant (MQTT).</li>
+      <li>Am Handy mit dem WLAN <code>SkyBridge-Setup</code> verbinden (Passwort <code>skybridge</code>).</li>
+      <li><code>http://192.168.4.1</code> &ouml;ffnen und alles auf einer Seite eintragen: <b>Board</b>, WLAN, MQTT und die <b>Export-Datei der Telink-SIG-Mesh-App</b>.</li>
+      <li><b>Alles speichern</b>: Die Bridge verbindet sich mit deinem WLAN, sucht die Lampen selbst und meldet sie in Home Assistant an.</li>
     </ol>
-    <p class="muted">Ausf&uuml;hrliche Anleitung im <a href="../">README des Projekts</a>.</p>
+    <p class="muted">Ausf&uuml;hrliche Anleitung im <a href="https://github.com/mariofritzer/OPPLE-Smart-Connect-Box-DIY#readme">README des Projekts</a>.</p>
   </div>
 
   <div class="card">

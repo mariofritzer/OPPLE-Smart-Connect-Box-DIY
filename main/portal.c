@@ -53,10 +53,11 @@ void cfg_load(void)
     size_t l1 = 16, l2 = 16;
     bool k1 = nvs_get_blob(h, "netkey", g_mesh.net_key, &l1) == ESP_OK && l1 == 16;
     bool k2 = nvs_get_blob(h, "appkey", g_mesh.app_key, &l2) == ESP_OK && l2 == 16;
+    g_mesh.iv_index = 1;   /* Standard der Telink-App */
     nvs_get_u32(h, "iv", &g_mesh.iv_index);
     nvs_get_u16(h, "own", &g_mesh.own_addr);
     get_str(h, "lamps", g_mesh.lamps, sizeof(g_mesh.lamps));
-    g_mesh.valid = k1 && k2 && g_mesh.lamps[0];
+    g_mesh.valid = k1 && k2;
     nvs_close(h);
 }
 
@@ -76,24 +77,46 @@ bool cfg_save(const app_cfg_t *c)
     return e == ESP_OK;
 }
 
-bool mesh_cfg_save(const uint8_t net_key[16], const uint8_t app_key[16], uint32_t iv, const char *lamps)
+bool mesh_cfg_save(const uint8_t net_key[16], const uint8_t app_key[16], uint32_t iv, const char *lamps, bool reset)
 {
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    /* Bei jeder neuen Mesh-Konfiguration eine neue eigene Adresse verwenden:
-     * Der Mesh-Speicher (inkl. Sequenznummer) wird geloescht, und die Lampen
-     * wuerden Nachrichten mit alter Adresse und kleiner Sequenznummer verwerfen. */
-    uint16_t own = g_mesh.own_addr + 1;
-    if (own <= MESH_OWN_ADDR_BASE || own >= MESH_OWN_ADDR_BASE + 0xF0) own = MESH_OWN_ADDR_BASE + 1;
-    nvs_set_blob(h, "netkey", net_key, 16);
-    nvs_set_blob(h, "appkey", app_key, 16);
-    nvs_set_u32(h, "iv", iv);
-    nvs_set_u16(h, "own", own);
+    if (reset) {
+        /* Neue Schluessel/IV: neue eigene Adresse verwenden. Der Mesh-Speicher (inkl.
+         * Sequenznummer) wird geloescht, und die Lampen wuerden Nachrichten mit alter
+         * Adresse und kleiner Sequenznummer verwerfen. */
+        uint16_t own = g_mesh.own_addr + 1;
+        if (own <= MESH_OWN_ADDR_BASE || own >= MESH_OWN_ADDR_BASE + 0xF0) own = MESH_OWN_ADDR_BASE + 1;
+        nvs_set_blob(h, "netkey", net_key, 16);
+        nvs_set_blob(h, "appkey", app_key, 16);
+        nvs_set_u32(h, "iv", iv);
+        nvs_set_u16(h, "own", own);
+        nvs_set_u8(h, "mrst", 1);
+    }
     nvs_set_str(h, "lamps", lamps);
-    nvs_set_u8(h, "mrst", 1);
     esp_err_t e = nvs_commit(h);
     nvs_close(h);
     return e == ESP_OK;
+}
+
+/* aktuelle Lampenliste und IV-Index speichern (nach der automatischen Suche) */
+void cfg_store_lamps_and_iv(void)
+{
+    char buf[sizeof(g_mesh.lamps)];
+    size_t o = 0;
+    buf[0] = 0;
+    for (int i = 0; i < g_num_lamps; i++) {
+        int w = snprintf(buf + o, sizeof(buf) - o, "%s%04X=%s", i ? ";" : "", g_lamps[i].addr, g_lamps[i].name);
+        if (w < 0 || (size_t)w >= sizeof(buf) - o) break;
+        o += w;
+    }
+    strcpy(g_mesh.lamps, buf);
+    nvs_handle_t h;
+    if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, "lamps", buf);
+    nvs_set_u32(h, "iv", g_mesh.iv_index);
+    nvs_commit(h);
+    nvs_close(h);
 }
 
 bool mesh_reset_pending(void)
@@ -179,7 +202,7 @@ static const char *MESH_JS =
     "var L=(j.nodes||[]).filter(function(n){return !n.excluded&&pv.indexOf(hx(n.UUID))<0&&!/^provisioner/i.test(n.name||'')})"
     ".map(function(n){return n.unicastAddress+' '+(n.name||'')});"
     "F.nk.value=nk.key;F.ak.value=ak.key;if(j.ivIndex!=null)F.iv.value=j.ivIndex;F.lamps.value=L.join('\\n');"
-    "M.className='ok';M.textContent=L.length+' Lampe(n) gefunden. Namen anpassen, fehlende Adressen erg\\u00e4nzen, dann speichern.';"
+    "M.className='ok';M.textContent='Schl\\u00fcssel gelesen, '+L.length+' Lampe(n) in der Datei. Fehlende Lampen findet die Bridge nach dem Speichern selbst.';"
     "}catch(x){M.className='bad';M.textContent='Datei nicht lesbar: '+x}};"
     "r.readAsText(e.target.files[0])};"
     "</script>";
@@ -226,10 +249,17 @@ static esp_err_t root_get(httpd_req_t *req)
         else n += snprintf(buf + n, BL - n, "<span class=ok>an, %u%%, %u K</span>",
                            (unsigned)((l->lightness * 100UL + 32767) / 65535), temp_to_kelvin(l->temp));
     }
-    snprintf(buf + n, BL - n, "<br><small>Kennung: %s</small></div>", g_id);
+    if (g_scan_result[0]) n += snprintf(buf + n, BL - n, "<br><small>Suche: %s</small>", g_scan_result);
+    n += snprintf(buf + n, BL - n, "<br><small>Kennung: %s</small>", g_id);
+    if (mesh_is_ready()) {
+        n += snprintf(buf + n, BL - n, mesh_is_scanning()
+            ? "<p><small>Lampensuche l&auml;uft (ca. 10&ndash;60&nbsp;s). Seite danach neu laden.</small></p>"
+            : "<form method=post action=/scan><button>Lampen suchen</button></form>");
+    }
+    snprintf(buf + n, BL - n, "</div>");
     httpd_resp_sendstr_chunk(req, buf);
 
-    /* ---- Board / WLAN / MQTT ---- */
+    /* ---- ein Formular fuer alles ---- */
     char opts[600];
     int on = 0;
     for (int i = 0; i < NUM_BOARDS && on < (int)sizeof(opts) - 120; i++) {
@@ -240,34 +270,31 @@ static esp_err_t root_get(httpd_req_t *req)
     html_escape(e2, 200, g_cfg.mqtt_host);
     html_escape(e3, 200, g_cfg.mqtt_user);
     snprintf(buf, BL,
-        "<form class=card method=post action=/save>"
-        "<b>1. Board, WLAN &amp; MQTT</b>"
+        "<form class=card id=m method=post action=/save autocomplete=off>"
+        "<b>1. Board &amp; WLAN</b>"
         "<label>Board <small>(Chip: " CONFIG_IDF_TARGET ")</small></label><select name=board>%s</select>"
         "<label>WLAN-Name (SSID, 2,4&nbsp;GHz)</label><input name=ssid value='%s' required maxlength=32>"
         "<label>WLAN-Passwort</label><input name=pass type=password placeholder='%s' maxlength=64>"
+        "<h2>2. Home Assistant (MQTT)</h2>"
         "<label>MQTT-Server (IP von Home Assistant)</label><input name=mhost value='%s' placeholder='192.168.1.10' maxlength=63>"
         "<label>MQTT-Port</label><input name=mport type=number value='%u'>"
         "<label>MQTT-Benutzer</label><input name=muser value='%s' maxlength=63>"
-        "<label>MQTT-Passwort</label><input name=mpass type=password placeholder='%s' maxlength=63>"
-        "<button>Speichern &amp; neu starten</button>"
-        "<small>Leere Passwortfelder lassen das gespeicherte Passwort unver&auml;ndert.</small></form>",
+        "<label>MQTT-Passwort</label><input name=mpass type=password placeholder='%s' maxlength=63>",
         opts, e1, g_cfg.pass[0] ? "(gespeichert)" : "", e2, g_cfg.mqtt_port, e3,
         g_cfg.mqtt_pass[0] ? "(gespeichert)" : "");
     httpd_resp_sendstr_chunk(req, buf);
-
-    /* ---- Mesh ---- */
     snprintf(buf, BL,
-        "<form class=card id=m method=post action=/mesh autocomplete=off>"
-        "<b>2. Lampen (Bluetooth Mesh)</b>"
+        "<h2>3. Lampen (Bluetooth Mesh)</h2>"
         "<label>Export-Datei der Telink-SIG-Mesh-App (.json)</label><input type=file id=f accept='.json,application/json'>"
         "<div id=msg></div>"
         "<label>NetKey (32 Hex-Zeichen)</label><input name=nk maxlength=32 placeholder='%s'>"
         "<label>AppKey (32 Hex-Zeichen)</label><input name=ak maxlength=32 placeholder='%s'>"
         "<label>IV-Index</label><input name=iv type=number min=0 placeholder='%s'>"
-        "<label>Lampen &ndash; eine pro Zeile: <i>Adresse Name</i></label><textarea name=lamps placeholder='0002 Wohnzimmer&#10;0003 Gang'>",
+        "<label>Lampen &ndash; eine pro Zeile: <i>Adresse Name</i> <small>(leer = automatisch suchen)</small></label>"
+        "<textarea name=lamps placeholder='0002 Wohnzimmer&#10;0003 Gang'>",
         g_mesh.valid ? "(gespeichert)" : "wird aus der Datei gelesen",
         g_mesh.valid ? "(gespeichert)" : "wird aus der Datei gelesen",
-        g_mesh.valid ? "(unver&auml;ndert)" : "0 = automatisch");
+        g_mesh.valid ? "(unver&auml;ndert)" : "leer = automatisch");
     httpd_resp_sendstr_chunk(req, buf);
     for (int i = 0; i < g_num_lamps; i++) {
         html_escape(e1, 200, g_lamps[i].name);
@@ -276,9 +303,9 @@ static esp_err_t root_get(httpd_req_t *req)
     }
     httpd_resp_sendstr_chunk(req,
         "</textarea>"
-        "<small>Die Schl&uuml;ssel werden nur im ESP gespeichert und hier nie wieder angezeigt. "
-        "Leere Schl&uuml;sselfelder behalten die gespeicherten Schl&uuml;ssel.</small>"
-        "<button>Lampen speichern &amp; neu starten</button></form>");
+        "<button>Alles speichern &amp; neu starten</button>"
+        "<small>Leere Passwort- und Schl&uuml;sselfelder behalten die gespeicherten Werte. "
+        "Die Schl&uuml;ssel werden nur im ESP gespeichert und hier nie wieder angezeigt.</small></form>");
     httpd_resp_sendstr_chunk(req, MESH_JS);
     httpd_resp_sendstr_chunk(req, "</body></html>");
     httpd_resp_sendstr_chunk(req, NULL);
@@ -358,37 +385,6 @@ static void send_result(httpd_req_t *req, bool ok, const char *ok_text, const ch
     if (ok) xTaskCreate(restart_task, "rst", 2048, NULL, 5, NULL);
 }
 
-static esp_err_t save_post(httpd_req_t *req)
-{
-    char *body = read_body(req, 1024);
-    if (!body) return ESP_FAIL;
-
-    app_cfg_t c = g_cfg;
-    char port[8], pass[65], mpass[64];
-    form_field(body, "ssid", c.ssid, sizeof(c.ssid));
-    form_field(body, "pass", pass, sizeof(pass));
-    form_field(body, "mhost", c.mqtt_host, sizeof(c.mqtt_host));
-    form_field(body, "mport", port, sizeof(port));
-    form_field(body, "muser", c.mqtt_user, sizeof(c.mqtt_user));
-    form_field(body, "mpass", mpass, sizeof(mpass));
-    char bid[24];
-    form_field(body, "board", bid, sizeof(bid));
-    for (int i = 0; i < NUM_BOARDS; i++) {
-        if (strcmp(BOARDS[i].id, bid) == 0) g_board = i;
-    }
-    free(body);
-    if (pass[0]) strcpy(c.pass, pass);
-    if (mpass[0]) strcpy(c.mqtt_pass, mpass);
-    c.mqtt_port = port[0] ? (uint16_t)atoi(port) : 1883;
-
-    bool ok = c.ssid[0] && cfg_save(&c);
-    send_result(req, ok,
-        "Die Bridge startet neu und verbindet sich mit deinem WLAN. Ihre neue IP-Adresse findest du im Router. "
-        "Die Lampen erscheinen danach in Home Assistant unter <i>Einstellungen &rarr; Ger&auml;te &amp; Dienste &rarr; MQTT</i>.",
-        "WLAN-Name fehlt oder Speichern fehlgeschlagen.");
-    return ESP_OK;
-}
-
 static bool parse_key(const char *hex, uint8_t out[16])
 {
     char clean[40];
@@ -446,37 +442,70 @@ static int parse_lamps(const char *in, char *out, size_t outlen)
     return count;
 }
 
-static esp_err_t mesh_post(httpd_req_t *req)
+static esp_err_t save_post(httpd_req_t *req)
 {
-    char *body = read_body(req, 3072);
+    char *body = read_body(req, 4096);
     if (!body) return ESP_FAIL;
-
-    char nk[80], ak[80], iv[16];
     char *lamps_in = malloc(1400), *lamps = malloc(sizeof(g_mesh.lamps));
     if (!lamps_in || !lamps) { free(body); free(lamps_in); free(lamps); return ESP_FAIL; }
+
+    /* --- WLAN / MQTT --- */
+    app_cfg_t c = g_cfg;
+    char port[8], pass[65], mpass[64], bid[24];
+    form_field(body, "ssid", c.ssid, sizeof(c.ssid));
+    form_field(body, "pass", pass, sizeof(pass));
+    form_field(body, "mhost", c.mqtt_host, sizeof(c.mqtt_host));
+    form_field(body, "mport", port, sizeof(port));
+    form_field(body, "muser", c.mqtt_user, sizeof(c.mqtt_user));
+    form_field(body, "mpass", mpass, sizeof(mpass));
+    form_field(body, "board", bid, sizeof(bid));
+    for (int i = 0; i < NUM_BOARDS; i++) {
+        if (strcmp(BOARDS[i].id, bid) == 0) g_board = i;
+    }
+    if (pass[0]) strcpy(c.pass, pass);
+    if (mpass[0]) strcpy(c.mqtt_pass, mpass);
+    c.mqtt_port = port[0] ? (uint16_t)atoi(port) : 1883;
+
+    /* --- Mesh --- */
+    char nk[80], ak[80], iv[16];
     form_field(body, "nk", nk, sizeof(nk));
     form_field(body, "ak", ak, sizeof(ak));
     form_field(body, "iv", iv, sizeof(iv));
     form_field(body, "lamps", lamps_in, 1400);
     free(body);
 
-    uint8_t net_key[16], app_key[16];
     const char *err = NULL;
-    if (nk[0] ? !parse_key(nk, net_key) : !g_mesh.valid) err = "NetKey fehlt oder ist ung&uuml;ltig (32 Hex-Zeichen).";
-    else if (ak[0] ? !parse_key(ak, app_key) : !g_mesh.valid) err = "AppKey fehlt oder ist ung&uuml;ltig (32 Hex-Zeichen).";
-    if (!nk[0]) memcpy(net_key, g_mesh.net_key, 16);
-    if (!ak[0]) memcpy(app_key, g_mesh.app_key, 16);
+    uint8_t net_key[16], app_key[16];
+    memcpy(net_key, g_mesh.net_key, 16);
+    memcpy(app_key, g_mesh.app_key, 16);
+    if (nk[0] && !parse_key(nk, net_key)) err = "NetKey ist ung&uuml;ltig (32 Hex-Zeichen).";
+    else if (ak[0] && !parse_key(ak, app_key)) err = "AppKey ist ung&uuml;ltig (32 Hex-Zeichen).";
+    else if (!g_mesh.valid && (nk[0] || ak[0]) && !(nk[0] && ak[0])) err = "Bitte NetKey <b>und</b> AppKey angeben (am einfachsten &uuml;ber die Export-Datei).";
+    if (!c.ssid[0]) err = "WLAN-Name fehlt.";
     uint32_t ivx = iv[0] ? (uint32_t)strtoul(iv, NULL, 10) : g_mesh.iv_index;
-    int count = parse_lamps(lamps_in, lamps, sizeof(g_mesh.lamps));
-    if (!err && count == 0) err = "Keine Lampe eingetragen (Format: <i>0002 Name</i>).";
+    parse_lamps(lamps_in, lamps, sizeof(g_mesh.lamps));
 
-    bool ok = !err && mesh_cfg_save(net_key, app_key, ivx, lamps);
+    bool have_keys = g_mesh.valid || (nk[0] && ak[0]);
+    bool reset = !g_mesh.valid || memcmp(net_key, g_mesh.net_key, 16) || memcmp(app_key, g_mesh.app_key, 16) || ivx != g_mesh.iv_index;
+    bool ok = !err && cfg_save(&c);
+    if (ok && have_keys) ok = mesh_cfg_save(net_key, app_key, ivx, lamps, reset);
+
     send_result(req, ok,
-        "Die Bridge startet neu und meldet sich mit den neuen Schl&uuml;sseln im Mesh an. "
-        "Nach etwa einer Minute sollten die Lampen auf der Startseite als erreichbar angezeigt werden.",
+        "Die Bridge startet neu. Mit eingetragenem WLAN verbindet sie sich mit deinem Netz, "
+        "sucht die Lampen und meldet sie in Home Assistant an (<i>Einstellungen &rarr; Ger&auml;te &amp; Dienste &rarr; MQTT</i>). "
+        "Das Einrichtungs-WLAN verschwindet dabei. Die Statusseite findest du danach unter der IP-Adresse der Bridge (im Router nachsehen).",
         err ? err : "Speichern fehlgeschlagen.");
     free(lamps_in);
     free(lamps);
+    return ESP_OK;
+}
+
+static esp_err_t scan_post(httpd_req_t *req)
+{
+    mesh_request_scan();
+    httpd_resp_set_status(req, "303 See Other");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
 
@@ -503,7 +532,7 @@ void portal_start(bool ap_mode)
     }
     httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = root_get };
     httpd_uri_t save = { .uri = "/save", .method = HTTP_POST, .handler = save_post };
-    httpd_uri_t mesh = { .uri = "/mesh", .method = HTTP_POST, .handler = mesh_post };
+    httpd_uri_t mesh = { .uri = "/scan", .method = HTTP_POST, .handler = scan_post };
     httpd_register_uri_handler(s_httpd, &root);
     httpd_register_uri_handler(s_httpd, &save);
     httpd_register_uri_handler(s_httpd, &mesh);

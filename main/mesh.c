@@ -43,6 +43,11 @@ uint16_t g_temp_max = HA_KELVIN_MAX;
  * in die Provisioner-Datenbank ein, ohne ihn neu anzulernen. Ohne Eintrag
  * verwirft der Stack die Antworten der Lampen. */
 #include "pvnr_mgmt.h"
+#include "settings.h"   /* bt_mesh_store_iv */
+
+/* Adressbereich fuer die automatische Lampensuche */
+#define SCAN_FIRST 0x0002
+#define SCAN_LAST  0x0060
 
 /* ---------------- Modelle der Bridge ---------------- */
 static uint8_t dev_uuid[16];
@@ -52,7 +57,8 @@ static esp_ble_mesh_cfg_srv_t config_server = {
     .net_transmit = ESP_BLE_MESH_TRANSMIT(2, 20),
     .relay = ESP_BLE_MESH_RELAY_DISABLED,
     .relay_retransmit = ESP_BLE_MESH_TRANSMIT(2, 20),
-    .beacon = ESP_BLE_MESH_BEACON_ENABLED,
+    /* keine eigenen Beacons: eine falsche IV-Index-Einstellung darf die Lampen nie beeinflussen */
+    .beacon = ESP_BLE_MESH_BEACON_DISABLED,
     .gatt_proxy = ESP_BLE_MESH_GATT_PROXY_NOT_SUPPORTED,
     .friend_state = ESP_BLE_MESH_FRIEND_NOT_SUPPORTED,
     .default_ttl = 7,
@@ -100,6 +106,16 @@ static volatile uint16_t s_wait_addr;
 static volatile bool s_resp_ok;
 static uint8_t s_tid;
 static int s_bind_pending;
+static volatile bool s_scanning, s_scan_request, s_discover_pending;
+static uint16_t s_found[MAX_LAMPS];
+static volatile int s_found_n;
+char g_scan_result[160];
+
+static void found_addr(uint16_t src)
+{
+    for (int i = 0; i < s_found_n; i++) if (s_found[i] == src) return;
+    if (s_found_n < MAX_LAMPS) s_found[s_found_n++] = src;
+}
 
 bool mesh_is_ready(void) { return s_ready; }
 
@@ -209,6 +225,9 @@ static void light_cb(esp_ble_mesh_light_client_cb_event_t event,
     if (event == ESP_BLE_MESH_LIGHT_CLIENT_TIMEOUT_EVT || param->error_code) {
         resp_done(src, false);
         return;
+    }
+    if (s_scanning && (op == ESP_BLE_MESH_MODEL_OP_LIGHT_CTL_STATUS || op == ESP_BLE_MESH_MODEL_OP_LIGHT_CTL_GET)) {
+        found_addr(src);
     }
     int i = lamp_index(src);
     if (op == ESP_BLE_MESH_MODEL_OP_LIGHT_CTL_TEMPERATURE_RANGE_GET ||
@@ -386,14 +405,109 @@ static void handle_set(const mesh_cmd_t *c)
     if (m.generic && c->onoff != 0) poll_lamp(c->addr);
 }
 
+static int register_node(uint16_t unicast);
+
+static void set_iv(uint32_t iv)
+{
+    bt_mesh_atomic_clear_bit(bt_mesh.flags, BLE_MESH_IVU_IN_PROGRESS);
+    bt_mesh.iv_index = iv;
+}
+
+/* Sucht alle Lampen im Netz (Light CTL Get an "alle Knoten") und findet dabei
+ * auch den richtigen IV-Index. Die Bridge sendet keine Beacons, daher kann ein
+ * falscher Versuch die Lampen nicht beeinflussen. */
+static void discovery(void)
+{
+    ESP_LOGW(TAG, "Suche Lampen (Adressen %04X-%04X)...", SCAN_FIRST, SCAN_LAST);
+    snprintf(g_scan_result, sizeof(g_scan_result), "Suche l&auml;uft...");
+    static uint16_t probe[SCAN_LAST - SCAN_FIRST + 1];
+    int np = 0;
+    for (uint16_t a = SCAN_FIRST; a <= SCAN_LAST; a++) {
+        if (!bt_mesh_provisioner_get_node_with_addr(a) && register_node(a) == 0) probe[np++] = a;
+    }
+
+    uint32_t cands[12];
+    int nc = 0;
+    cands[nc++] = g_mesh.iv_index;
+    for (uint32_t v = 0; v <= 10 && nc < 12; v++) if (v != g_mesh.iv_index) cands[nc++] = v;
+
+    uint32_t orig = bt_mesh.iv_index, hit = UINT32_MAX;
+    s_found_n = 0;
+    s_scanning = true;
+    for (int c = 0; c < nc && hit == UINT32_MAX; c++) {
+        set_iv(cands[c]);
+        msg_t m = {0};
+        fill_common(&m.common, ESP_BLE_MESH_MODEL_OP_LIGHT_CTL_GET, M_CTL, MESH_ALL_NODES);
+        m.is_get = true;
+        for (int k = 0; k < 2 && s_found_n == 0; k++) {
+            do_send(&m);
+            vTaskDelay(pdMS_TO_TICKS(2500));
+        }
+        if (s_found_n > 0) {
+            vTaskDelay(pdMS_TO_TICKS(2500));   /* Nachzuegler abwarten */
+            hit = cands[c];
+        }
+    }
+    s_scanning = false;
+    if (hit == UINT32_MAX) set_iv(orig);
+
+    /* Platzhalter-Knoten wieder entfernen */
+    for (int i = 0; i < np; i++) {
+        bool keep = lamp_index(probe[i]) >= 0;
+        for (int f = 0; f < s_found_n; f++) if (s_found[f] == probe[i]) keep = true;
+        if (!keep) bt_mesh_provisioner_delete_node_with_node_addr(probe[i]);
+    }
+
+    if (hit == UINT32_MAX) {
+        ESP_LOGW(TAG, "Keine Lampe gefunden");
+        snprintf(g_scan_result, sizeof(g_scan_result),
+                 "Keine Lampe gefunden. Haben die Lampen Strom? Stimmen die Schl&uuml;ssel (Export-Datei)?");
+        return;
+    }
+    if (hit != g_mesh.iv_index) {
+        ESP_LOGW(TAG, "IV-Index %" PRIu32 " erkannt", hit);
+        g_mesh.iv_index = hit;
+        bt_mesh_store_iv(false);
+    }
+    int added = 0;
+    for (int f = 0; f < s_found_n; f++) {
+        if (lamp_index(s_found[f]) >= 0 || g_num_lamps >= MAX_LAMPS) continue;
+        lamp_t *l = &g_lamps[g_num_lamps++];
+        memset(l, 0, sizeof(*l));
+        l->addr = s_found[f];
+        snprintf(l->name, sizeof(l->name), "Lampe %04X", s_found[f]);
+        added++;
+    }
+    cfg_store_lamps_and_iv();
+    int n = snprintf(g_scan_result, sizeof(g_scan_result), "%d Lampe(n) gefunden:", s_found_n);
+    for (int f = 0; f < s_found_n && n < (int)sizeof(g_scan_result) - 20; f++) n += snprintf(g_scan_result + n, sizeof(g_scan_result) - n, " %04X", s_found[f]);
+    n += snprintf(g_scan_result + n, sizeof(g_scan_result) - n, " (IV %" PRIu32 ")", hit);
+    if (added) snprintf(g_scan_result + n, sizeof(g_scan_result) - n, ", %d neu hinzugef&uuml;gt", added);
+    ESP_LOGW(TAG, "%s", g_scan_result);
+    if (added) mqtt_ha_announce();
+    mesh_poll_all();
+}
+
+void mesh_request_scan(void) { s_scan_request = true; }
+bool mesh_is_scanning(void) { return s_scanning || s_scan_request; }
+
 static void worker(void *arg)
 {
     mesh_cmd_t c;
     int64_t next_poll = 0;
-    bool range_read = false;
+    bool range_read = false, first = true, auto_disc_done = false;
+    int silent_rounds = 0;
     while (true) {
         if (!s_ready) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
-        if (!range_read) {
+        if (s_scan_request || (first && (s_discover_pending || g_num_lamps == 0))) {
+            s_scan_request = false;
+            s_discover_pending = false;
+            discovery();
+            auto_disc_done = true;
+            next_poll = 0;
+        }
+        first = false;
+        if (!range_read && g_num_lamps > 0) {
             read_temp_range(g_lamps[0].addr);
             range_read = true;
         }
@@ -406,6 +520,13 @@ static void worker(void *arg)
         if (now >= next_poll) {
             for (int i = 0; i < g_num_lamps; i++) poll_lamp(g_lamps[i].addr);
             next_poll = now + 30LL * 1000000;
+            /* antwortet nach dem Start gar keine Lampe -> einmal automatisch suchen (IV-Index?) */
+            bool any = false;
+            for (int i = 0; i < g_num_lamps; i++) any |= g_lamps[i].have_state;
+            if (!any && !auto_disc_done && ++silent_rounds >= 2) {
+                auto_disc_done = true;
+                s_scan_request = true;
+            }
         }
     }
 }
@@ -424,19 +545,26 @@ void mesh_poll_all(void)
 }
 
 /* ---------------- Einrichtung ---------------- */
+/* Knoten in die Provisioner-Datenbank eintragen (sonst verwirft der Stack seine Antworten) */
+static int register_node(uint16_t unicast)
+{
+    if (bt_mesh_provisioner_get_node_with_addr(unicast)) return 0;
+    bt_mesh_addr_t addr = {0};
+    uint8_t uuid[16] = {0x53, 0x4B, 0x59, 0x42, 0x52, 0x44, 0x47, 0x45}; /* "SKYBRDGE" */
+    uuid[14] = unicast >> 8;
+    uuid[15] = unicast & 0xFF;
+    uint16_t idx = 0;
+    /* Der Geraeteschluessel wird nur fuer Konfigurationsnachrichten gebraucht,
+     * die die Bridge nie sendet -> Platzhalter */
+    uint8_t dev_key[16] = {0};
+    return bt_mesh_provisioner_provision(&addr, uuid, 0, unicast, 1, NET_IDX, 0,
+                                         g_mesh.iv_index, dev_key, &idx, false);
+}
+
 static void register_lamps(void)
 {
     for (int i = 0; i < g_num_lamps; i++) {
-        bt_mesh_addr_t addr = {0};
-        uint8_t uuid[16] = {0x53, 0x4B, 0x59, 0x42, 0x52, 0x44, 0x47, 0x45}; /* "SKYBRDGE" */
-        uuid[14] = g_lamps[i].addr >> 8;
-        uuid[15] = g_lamps[i].addr & 0xFF;
-        uint16_t idx = 0;
-        /* Der Geraeteschluessel wird nur fuer Konfigurationsnachrichten gebraucht,
-         * die die Bridge nie sendet -> Platzhalter */
-        uint8_t dev_key[16] = {0};
-        int err = bt_mesh_provisioner_provision(&addr, uuid, 0, g_lamps[i].addr, 1, NET_IDX, 0,
-                                                g_mesh.iv_index, dev_key, &idx, false);
+        int err = register_node(g_lamps[i].addr);
         ESP_LOGW(TAG, "Lampe %s (0x%04x) registriert: %d", g_lamps[i].name, g_lamps[i].addr, err);
     }
     s_ready = true;
@@ -495,7 +623,7 @@ static void config_client_cb(esp_ble_mesh_cfg_client_cb_event_t event, esp_ble_m
 
 void mesh_start(void)
 {
-    if (!g_mesh.valid || g_num_lamps == 0) {
+    if (!g_mesh.valid) {
         ESP_LOGW(TAG, "Keine Mesh-Konfiguration -> bitte auf der Webseite die Export-Datei hochladen");
         return;
     }
@@ -510,6 +638,7 @@ void mesh_start(void)
             nvs_close(h);
         }
         ESP_LOGW(TAG, "Mesh-Speicher zurueckgesetzt, eigene Adresse jetzt 0x%04x", g_mesh.own_addr);
+        s_discover_pending = true;
     }
 
     s_queue = xQueueCreate(16, sizeof(mesh_cmd_t));

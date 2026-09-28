@@ -90,6 +90,11 @@ static void publish_discovery(void)
     }
 }
 
+void mqtt_ha_announce(void)
+{
+    if (s_client && g_mqtt_connected) publish_discovery();
+}
+
 void mqtt_ha_publish_lamp(int idx)
 {
     if (!s_client || !g_mqtt_connected || idx < 0 || idx >= g_num_lamps) return;

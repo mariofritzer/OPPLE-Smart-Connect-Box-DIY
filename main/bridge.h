@@ -47,6 +47,9 @@ int  lamp_index(uint16_t addr);
 uint8_t  lightness_to_bri(uint16_t l);
 uint16_t temp_to_kelvin(uint16_t t);
 uint32_t mesh_current_iv(void);
+void mesh_request_scan(void);
+bool mesh_is_scanning(void);
+extern char g_scan_result[160];
 
 /* ---------- Konfiguration ---------- */
 typedef struct {
@@ -75,12 +78,14 @@ extern bool g_mqtt_connected;
 
 void cfg_load(void);
 bool cfg_save(const app_cfg_t *c);
-bool mesh_cfg_save(const uint8_t net_key[16], const uint8_t app_key[16], uint32_t iv, const char *lamps);
+bool mesh_cfg_save(const uint8_t net_key[16], const uint8_t app_key[16], uint32_t iv, const char *lamps, bool reset);
 void cfg_erase(void);
 void lamps_from_cfg(void);
+void cfg_store_lamps_and_iv(void);
 bool mesh_reset_pending(void);
 void portal_start(bool ap_mode);
 
 /* ---------- MQTT / Home Assistant ---------- */
 void mqtt_ha_start(void);
 void mqtt_ha_publish_lamp(int idx);
+void mqtt_ha_announce(void);

@@ -34,6 +34,7 @@ Home Assistant auf (MQTT-Discovery), mit Ein/Aus, Helligkeit und Farbtemperatur.
 | Jede Lampe einzeln + Gruppe „Alle Lampen“ | ✅ |
 | Zustand wird regelmäßig abgefragt (auch bei Schalten per App) | ✅ alle 30 s |
 | Bis zu 16 Lampen | ✅ |
+| Lampen und IV-Index werden automatisch gefunden | ✅ |
 | Hersteller-Szenen / Effekte (z. B. OPPLE-Himmelseffekte) | ❌ (herstellerspezifisch) |
 
 **Geeignete Lampen:** Leuchten mit **Bluetooth SIG Mesh** und Telink-Chip, die die Standard-Modelle
@@ -95,7 +96,8 @@ heraus. Deshalb werden die Lampen einmalig mit der **Telink-SIG-Mesh-App** neu a
 2. Hersteller-App **komplett schließen**.
 3. Die Lampen am Wandschalter **kurz aus- und wieder einschalten**. Viele Lampen lassen sich nur in den ersten Minuten nach dem Einschalten anlernen.
 4. In der Telink-App auf der Startseite **Device** oben rechts auf **„+“** tippen **(1)**.
-5. Unter **Device Scan** erscheinen die freien Lampen **(1)**. Lampe antippen und **ADD ALL** **(2)** drücken, dann warten, bis das Anlernen fertig ist.
+5. Unter **Device Scan** erscheinen die freien Lampen **(1)**. Bei der Lampe erscheint **ADD**. Antippen und etwas Geduld haben: Nach etwa 10–30 Sekunden ist die Lampe angelernt.
+   Bei mehreren Lampen jede einzeln hinzufügen (oder **ADD ALL** unten, sobald es aktiv ist).
 6. Zurück auf der Startseite steht jede Lampe mit ihrer **Adresse**: `04(cid-27D)` bedeutet Adresse **`0004`** **(1)**.
    Antippen schaltet die Lampe, **ALL ON / ALL OFF** **(2)** schaltet alle. ✅
 7. **Lang drücken** auf eine Lampe öffnet **Device Setting**: Ein/Aus **(1)**, Helligkeit **(2)** und Farbtemperatur **(3)**.
@@ -114,7 +116,7 @@ In der Telink-App das Netz als **JSON-Datei exportieren**:
 1. Unten den Reiter **Setting** **(1)** → **Manage Network** **(2)**
 2. Beim Netz *Default Mesh* auf **„•••“** **(3)** → **Share Export** **(4)**
 3. Alle Net Keys angehakt lassen, **JSON File** **(5)** wählen → **EXPORT** **(6)**
-4. Die Datei (z. B. `mesh.json`) auf den PC übertragen, per Mail, Cloud oder USB-Kabel.
+4. Die App speichert die Datei (z. B. `mesh.json`) in einem Ordner auf dem Handy. Sie bleibt dort, denn du lädst sie in Schritt 4 direkt vom Handy hoch.
 
 <p>
 <img src="docs/img/app-5a-einstellungen.png" width="200" alt="Setting, Manage Network">
@@ -127,31 +129,39 @@ In der Telink-App das Netz als **JSON-Datei exportieren**:
 
 > 🔒 Diese Datei enthält die **Schlüssel deiner Lampen**. Gib sie nicht weiter und lade sie **nie** auf GitHub hoch.
 
-> **Gelöschte Lampen** bleiben im Export als „excluded“ stehen. Der Import auf der Einrichtungsseite überspringt sie automatisch.
-> Nach Löschen und Neu-Anlernen bekommt eine Lampe eine **neue Adresse**. Dann auf der Einrichtungsseite einfach die neue Datei hochladen.
-
-> **Fehlt eine Lampe im Export?** Manche Leuchten (z. B. OPPLE) haben alle **dieselbe Geräte-UUID**. Die
-> Telink-App überschreibt dann beim Anlernen den vorherigen Eintrag. In den Lampen selbst ist trotzdem alles
-> korrekt. Die Adresse jeder Lampe steht in der App auf der Startseite unter dem Lampensymbol (`04(cid-27D)` = `0004`).
-> Die App vergibt die Adressen **fortlaufend** und nimmt dabei nie eine Adresse doppelt, auch nicht nach
-> dem Löschen. Bei einem neuen Netz: 1. Lampe = `0002`, 2. Lampe = `0003` usw. Fehlt z. B. `0004` zwischen `0003`
-> (gelöscht) und `0005`, ist das die fehlende Lampe. Eine fehlende Adresse trägst du in Schritt 4 einfach von Hand nach.
+> **Fehlt eine Lampe im Export?** Das ist normal und kein Problem. Manche Leuchten (z. B. OPPLE) haben alle
+> **dieselbe Geräte-UUID**, und die Telink-App überschreibt dann beim Anlernen den vorherigen Eintrag. Aus der Datei
+> braucht die Bridge eigentlich nur die **Schlüssel**: Die Lampen **sucht sie danach selbst** und findet dabei auch
+> den richtigen IV-Index.
 
 ## Schritt 3 – Firmware installieren
 
 ### Variante A: Im Browser (empfohlen)
 
-1. Board per USB anstecken.
-2. Den **Web-Installer** in **Chrome oder Edge** öffnen:
-   **`https://<dein-github-name>.github.io/<repo-name>/`**
-   (bzw. die Datei [`docs/index.html`](docs/index.html) über GitHub Pages).
-3. **„Firmware installieren“** klicken, Anschluss wählen, beim ersten Mal **„Gerät löschen“** bestätigen.
+1. Board per USB anstecken. Vorher alle Programme schließen, die den Anschluss belegen könnten (Arduino IDE, VS Code/PlatformIO usw.).
+2. Den **Web-Installer** in **Chrome oder Edge** am PC öffnen (nicht am Handy):
+   **https://mariofritzer.github.io/OPPLE-Smart-Connect-Box-DIY/**
+3. **„Firmware installieren“** klicken.
+4. Im Fenster den **ESP auswählen** **(1)** → **Verbinden** **(2)**. Welcher Eintrag ist der ESP?
+   - **„USB JTAG/serial debug unit“**: ESP32-C3, -C6 und -S3 direkt über USB
+   - **„USB-SERIAL CH340“** oder **„CP210x“**: Boards mit USB-Wandlerchip, z. B. ESP32 DevKit
+   - Im Zweifel ESP abstecken und schauen, welcher Eintrag verschwindet.
+5. **Install SkyBridge** **(3)** → beim ersten Mal **Erase device** anhaken **(4)** → **Next** **(5)** → **Install** **(6)**.
+6. Warten (ca. 2 Minuten, **Fenster im Vordergrund lassen**), bis **„Installation complete!“** erscheint → **Next** **(7)**.
+7. Board kurz ab- und wieder anstecken.
 
 <img src="docs/img/installer-seite.png" alt="Web-Installer" width="560">
 
-<!-- BILD: docs/img/flash-1-port.png -->
-<!-- BILD: docs/img/flash-2-erase.png -->
-<!-- BILD: docs/img/flash-3-fertig.png -->
+<p>
+<img src="docs/img/flash-1-port.png" height="170" alt="Anschluss auswählen">
+<img src="docs/img/flash-2-menu.png" height="170" alt="Install SkyBridge">
+<img src="docs/img/flash-3-erase.png" height="170" alt="Erase device">
+</p>
+<p>
+<img src="docs/img/flash-4-install.png" height="170" alt="Install bestätigen">
+<img src="docs/img/flash-5-fortschritt.png" height="170" alt="Fortschritt">
+<img src="docs/img/flash-6-fertig.png" height="170" alt="Installation complete">
+</p>
 
 ### Variante B: Mit Python-Skript
 
@@ -182,35 +192,34 @@ Die Datei wird immer an Adresse **`0x0`** geschrieben.
 
 ## Schritt 4 – SkyBridge einrichten
 
-1. Am Handy mit dem WLAN **`SkyBridge-Setup`** verbinden (Passwort **`skybridge`**).
-   <!-- BILD: docs/img/handy-wlan.png -->
-2. **`http://192.168.4.1`** öffnen.
-3. Unter **„1. Board, WLAN & MQTT“**:
-   - **Board** auswählen
-   - **WLAN** eintragen (muss **2,4 GHz** sein)
-   - **MQTT-Server**: IP-Adresse von Home Assistant, Port `1883`
-   - **MQTT-Benutzer/Passwort**: am besten einen eigenen HA-Benutzer anlegen (siehe Schritt 5)
-   - Speichern. Die Bridge startet neu und verbindet sich mit deinem WLAN.
+Alles passiert **am Handy**, auf dem auch die Export-Datei liegt:
 
-   <img src="docs/img/setup-1-wlan-mqtt.png" alt="Board, WLAN und MQTT eintragen" width="320">
+1. In den WLAN-Einstellungen mit **`SkyBridge-Setup`** verbinden **(1)**, Passwort **`skybridge`** **(2)** → **Verbinden** **(3)**.
+   Falls das Handy „kein Internet“ meldet: trotzdem verbunden bleiben.
 
-4. Die neue **IP-Adresse der Bridge** im Router nachsehen (z. B. Fritzbox: *Heimnetz → Netzwerk*) und im Browser öffnen.
-5. Unter **„2. Lampen (Bluetooth Mesh)“**:
-   - Die **Export-Datei** aus Schritt 2 auswählen. NetKey, AppKey und die Lampenliste werden automatisch ausgefüllt.
-   - Lampen **benennen** (eine pro Zeile: `Adresse Name`, z. B. `0002 Gang vorne`) und fehlende Adressen ergänzen.
-   - **Speichern.** Nach etwa einer Minute stehen die Lampen auf der Startseite als erreichbar.
+   <img src="docs/img/handy-1-wlan.png" width="220" alt="WLAN SkyBridge-Setup"> <img src="docs/img/handy-2-passwort.png" width="220" alt="Passwort skybridge">
 
-   <img src="docs/img/setup-2-lampen.png" alt="Export-Datei hochladen und Lampen benennen" width="320">
+2. Im Browser **`http://192.168.4.1`** öffnen und **alles auf einer Seite** ausfüllen:
+   - **Board** **(1)**, **WLAN-Name** **(2)** und **WLAN-Passwort** **(3)**. Das WLAN muss **2,4 GHz** sein.
+   - **MQTT-Server** = IP-Adresse von Home Assistant **(4)**, **MQTT-Benutzer/-Passwort** **(5)(6)**, siehe Schritt 5
+   - Bei **Export-Datei** die `mesh.json` aus Schritt 2 wählen **(7)**. NetKey und AppKey werden automatisch ausgefüllt.
+     Die Lampenliste darf unvollständig oder leer sein.
+   - **Alles speichern & neu starten** **(8)**
 
-6. Oben auf der Seite zeigt der **Status**, ob alles läuft:
+   <img src="docs/img/setup-formular.png" width="320" alt="Einrichtungsseite">
 
-   <img src="docs/img/setup-3-status.png" alt="Statusanzeige" width="320">
+3. Die Bridge startet neu, verbindet sich mit deinem WLAN, **sucht alle Lampen** (10–60 Sekunden) und meldet sie
+   in Home Assistant an. Das Einrichtungs-WLAN verschwindet.
 
+4. **Statusseite:** Die IP-Adresse der Bridge im Router nachsehen (z. B. Fritzbox: *Heimnetz → Netzwerk*, Name meist
+   „espressif“) und im Browser öffnen. Dort siehst du WLAN, MQTT, Mesh und jede Lampe. Mit **Lampen suchen** **(1)**
+   startest du die Suche jederzeit neu, z. B. nach dem Anlernen einer weiteren Lampe. Gefundene Lampen heißen zuerst
+   „Lampe 0005“ usw. Umbenennen kannst du sie im Feld „Lampen“ oder direkt in Home Assistant.
+
+   <img src="docs/img/setup-3-status.png" width="320" alt="Statusanzeige">
 
 > Während der Ersteinrichtung ist Bluetooth absichtlich **aus**. Der ESP hat nur ein Funkteil, und das
 > Einrichtungs-WLAN wäre sonst kaum erreichbar.
-
-Der **IV-Index** wird normalerweise automatisch von den Lampen übernommen. Das Feld kannst du leer lassen.
 
 ## Schritt 5 – Home Assistant
 
@@ -218,10 +227,12 @@ Der **IV-Index** wird normalerweise automatisch von den Lampen übernommen. Das 
 2. **MQTT-Benutzer:** *Einstellungen → Personen → Benutzer → Benutzer hinzufügen*, z. B. `skybridge`
    (ohne Administratorrechte). Mosquitto akzeptiert HA-Benutzer automatisch.
    ⚠️ Der Name **`homeassistant`** ist beim Mosquitto-Add-on reserviert und funktioniert nicht.
-   <!-- BILD: docs/img/ha-benutzer.png -->
 3. Die Lampen erscheinen unter *MQTT → Geräte* als eigene Geräte, dazu **„Alle Lampen“** am Gerät *SkyBridge*.
-   <!-- BILD: docs/img/ha-mqtt-geraete.png -->
-   <!-- BILD: docs/img/ha-geraet.png -->
+
+   <img src="docs/img/ha-mqtt-geraete.png" alt="Geräte in Home Assistant" width="760">
+
+   <img src="docs/img/ha-geraet.png" alt="Geräteseite einer Lampe" width="620">
+   <img src="docs/img/ha-steuerung.png" alt="Helligkeit und Farbtemperatur" width="260">
 
 **Beispiel-Automation** (Präsenzmelder schaltet Licht):
 
@@ -268,7 +279,9 @@ mode: restart
 | **„This chip is ESP32-C6, not ESP32-C3“** | Das Board ist anders beschriftet, als es ist. Die Datei für den **erkannten** Chip nehmen (Web-Installer und `flash.py` machen das automatisch). |
 | Handy kommt nicht ins `SkyBridge-Setup`-WLAN | Netz „vergessen“ und neu verbinden. Passwort `skybridge`. „Kein Internet“ bestätigen. |
 | Lampen erscheinen nicht in HA | Auf der Statusseite prüfen, ob MQTT „verbunden“ ist. MQTT-Server-IP und Benutzer prüfen (nicht `homeassistant`). |
-| Lampen „nicht erreichbar“ | Haben die Lampen Strom? Bridge näher an die Lampen. NetKey/AppKey stimmen? Lampen mit der Telink-App testen. |
+| Lampe zeigt „noch keine Antwort“ | Auf der Statusseite **Lampen suchen** drücken. Die Suche findet auch Lampen mit geänderter Adresse und den richtigen IV-Index. Nicht mehr vorhandene Adressen aus der Lampenliste löschen. |
+| Lampen „nicht erreichbar“ / Suche findet nichts | Haben die Lampen Strom? Bridge näher an die Lampen. Stimmen NetKey/AppKey (neue Export-Datei hochladen)? Lampen mit der Telink-App testen. |
+| Alte Lampen hängen in Home Assistant | Gerät in HA öffnen → ⋮ → **Löschen**. |
 | WLAN geändert | Reset-Taste **5 s halten**. WLAN/MQTT werden gelöscht, die Lampen-Einrichtung bleibt. Dann wieder mit `SkyBridge-Setup` verbinden. |
 
 **Log ansehen:** Board per USB anschließen und einen seriellen Monitor mit **115200 Baud** öffnen,
